@@ -37,6 +37,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -58,6 +59,9 @@ fun QRScannerScreen() {
     val uniqueQRCodes = remember { mutableStateOf(emptySet<String>()) }
     val verifiedQRCodes = remember { mutableStateOf(emptySet<String>()) }
     val path = remember { Path() }
+    val strokeStyle = remember { Stroke(width = 15f) } // Stroke nesnesini cache'le
+    val verifiedColor = remember { Color(0xFF4CAF50) }
+    val unverifiedColor = remember { Color(0xFFFF0000) }
     val animatedCorners =
         remember { mutableStateMapOf<String, List<Animatable<Offset, AnimationVector2D>>>() }
     val listState = rememberLazyListState()
@@ -130,7 +134,10 @@ fun QRScannerScreen() {
         Canvas(
             modifier = Modifier
                 .fillMaxSize()
-                .graphicsLayer(alpha = 0.99f) // Donanım hızlandırmayı tetikler.
+                .graphicsLayer(
+                    alpha = 0.99f, // Donanım hızlandırmayı tetikler.
+                    compositingStrategy = CompositingStrategy.Offscreen // Daha verimli compositing
+                )
         ) {
             animatedCorners.forEach { (value, animatables) ->
                 if (animatables.size != 4) return@forEach
@@ -146,10 +153,8 @@ fun QRScannerScreen() {
 
                 drawPath(
                     path = path,
-                    color = if (verifiedQRCodes.value.contains(value)) Color(0xFF4CAF50) else Color(
-                        0xFFFF0000
-                    ),
-                    style = Stroke(width = 15f)
+                    color = if (verifiedQRCodes.value.contains(value)) verifiedColor else unverifiedColor,
+                    style = strokeStyle
                 )
 
                 if (verifiedQRCodes.value.contains(value)) {

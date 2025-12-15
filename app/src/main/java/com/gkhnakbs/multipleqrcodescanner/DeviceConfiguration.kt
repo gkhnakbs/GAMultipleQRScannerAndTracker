@@ -20,17 +20,12 @@ enum class DeviceConfiguration {
             val widthClass = windowSizeClass.windowWidthSizeClass
             val heightClass = windowSizeClass.windowHeightSizeClass
 
-            return when {
-                widthClass == WindowWidthSizeClass.COMPACT &&
-                        heightClass == WindowHeightSizeClass.MEDIUM -> MOBILE_PORTRAIT
-                widthClass == WindowWidthSizeClass.COMPACT &&
-                        heightClass == WindowHeightSizeClass.EXPANDED -> MOBILE_PORTRAIT
-                widthClass == WindowWidthSizeClass.EXPANDED &&
-                        heightClass == WindowHeightSizeClass.COMPACT -> MOBILE_LANDSCAPE
-                widthClass == WindowWidthSizeClass.MEDIUM &&
-                        heightClass == WindowHeightSizeClass.EXPANDED -> TABLET_PORTRAIT
-                widthClass == WindowWidthSizeClass.EXPANDED &&
-                        heightClass == WindowHeightSizeClass.MEDIUM -> TABLET_LANDSCAPE
+            return when (widthClass) {
+                WindowWidthSizeClass.COMPACT if heightClass == WindowHeightSizeClass.MEDIUM -> MOBILE_PORTRAIT
+                WindowWidthSizeClass.COMPACT if heightClass == WindowHeightSizeClass.EXPANDED -> MOBILE_PORTRAIT
+                WindowWidthSizeClass.EXPANDED if heightClass == WindowHeightSizeClass.COMPACT -> MOBILE_LANDSCAPE
+                WindowWidthSizeClass.MEDIUM if heightClass == WindowHeightSizeClass.EXPANDED -> TABLET_PORTRAIT
+                WindowWidthSizeClass.EXPANDED if heightClass == WindowHeightSizeClass.MEDIUM -> TABLET_LANDSCAPE
                 else -> DESKTOP
             }
         }
