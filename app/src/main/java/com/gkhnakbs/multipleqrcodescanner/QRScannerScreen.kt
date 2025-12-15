@@ -122,7 +122,7 @@ fun QRScannerScreen() {
                 }
 
                 if (newCodesFound != null) {
-                    uniqueQRCodes.value = uniqueQRCodes.value + newCodesFound
+                    uniqueQRCodes.value += newCodesFound
                 }
             }
         )
@@ -228,7 +228,7 @@ fun QRScannerScreen() {
                                 containerColor = Color.White.copy(alpha = 0.9f)
                             ),
                             onClick = {
-                                verifiedQRCodes.value = verifiedQRCodes.value + qr
+                                verifiedQRCodes.value += qr
                             }
                         ) {
                             Column(
