@@ -49,8 +49,7 @@ fun CameraPreview(
     val scanner = remember {
         val options = BarcodeScannerOptions.Builder()
             .setBarcodeFormats(
-                Barcode.FORMAT_DATA_MATRIX,
-                Barcode.FORMAT_QR_CODE
+                Barcode.FORMAT_DATA_MATRIX
             )
             .build()
         BarcodeScanning.getClient(options)
@@ -80,7 +79,7 @@ fun CameraPreview(
                     .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
                     .setResolutionStrategy(
                         ResolutionStrategy(
-                            Size(1920, 1080), // Daha yüksek çözünürlük = daha fazla QR detayı
+                            Size(640, 480),
                             ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER
                         )
                     )
@@ -146,8 +145,11 @@ fun CameraPreview(
                         }
                         .addOnFailureListener { e ->
                             e.printStackTrace()
+                            imageProxy.close()
+                            imageProxy.image?.close()
                         }
                         .addOnCompleteListener {
+                            imageProxy.image?.close()
                             imageProxy.close()
                         }
                 }

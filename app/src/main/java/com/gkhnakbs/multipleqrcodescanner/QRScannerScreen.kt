@@ -106,7 +106,7 @@ fun QRScannerScreen() {
                     for ((value, cornersAnimatable) in animatedCorners.entries.reversed()) {
                         val currentCorners = cornersAnimatable.map { it.value }
                         if (isPointInPolygon(tapOffset, currentCorners)) {
-                            verifiedQRCodes.value = verifiedQRCodes.value + value
+                            verifiedQRCodes.value += value
                             break
                         }
                     }
