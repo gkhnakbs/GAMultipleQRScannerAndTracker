@@ -1,3 +1,6 @@
+<div align="center">
+  <img src="app/src/main/res/mipmap-xxxhdpi/ic_launcher_app_logo.webp" width="192" height="192" alt="App Logo">
+</div>
 # Multiple QR Code Scanner (Android, CameraX + ML Kit)
 
 Bu repo, aynı karede birden fazla QR/Data Matrix kodunu hızlı ve isabetli şekilde tespit etmek için optimize edilmiş bir CameraX + ML Kit uygulamasını içerir. Jetpack Compose ile yazılmış arayüz, düşük gecikme ve yüksek kare/saniye hedefiyle tasarlanmıştır.
