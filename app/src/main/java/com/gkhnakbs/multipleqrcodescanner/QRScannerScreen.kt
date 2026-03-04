@@ -49,10 +49,8 @@ import androidx.compose.ui.unit.dp
 fun QRScannerScreen() {
     val currentCorners = remember { mutableMapOf<String, List<Offset>>() }
 
-    // ✅ Her barkodun son görüldüğü zaman (nanos)
     val lastSeenTime = remember { mutableMapOf<String, Long>() }
 
-    // ✅ Kaç nanosaniye görülmezse silinsin (500ms)
     val retentionNanos = 500_000_000L
 
     val uniqueQRCodes = remember { mutableStateOf(emptySet<String>()) }

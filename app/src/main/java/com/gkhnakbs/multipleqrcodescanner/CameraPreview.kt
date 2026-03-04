@@ -87,7 +87,6 @@ fun CameraPreview(
                     .build()
                     .also { it.surfaceProvider = previewView.surfaceProvider }
 
-                // ✅ 640x480 — Data Matrix için yeterli, ML Kit'e en az iş
                 val resolutionSelector = ResolutionSelector.Builder()
                     .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
                     .setResolutionStrategy(
@@ -143,7 +142,6 @@ fun CameraPreview(
 
                     val rotationDegrees = imageProxy.imageInfo.rotationDegrees
 
-                    // ✅ Scale cache'i sadece view boyutu değişince güncelle
                     val vw = previewView.width
                     val vh = previewView.height
                     if (vw != lastViewWidth || vh != lastViewHeight) {
@@ -177,8 +175,6 @@ fun CameraPreview(
                                 return@addOnSuccessListener
                             }
 
-
-                            // ✅ Tam kapasite ile oluştur — resize yok
                             val results = ArrayList<QRCodeResult>(barcodes.size)
 
                             for (i in barcodes.indices) {
@@ -186,7 +182,6 @@ fun CameraPreview(
                                 val value = barcode.rawValue ?: continue
                                 val corners = barcode.cornerPoints ?: continue
 
-                                // ✅ Fixed size 4 — Data Matrix her zaman 4 köşe
                                 val transformed = ArrayList<PointF>(4)
                                 for (j in corners.indices) {
                                     val p = corners[j]
@@ -199,7 +194,7 @@ fun CameraPreview(
                                 mainExecutor.execute { onQRCodesDetected(results) }
                             }
                         }
-                        .addOnFailureListener { /* sessizce geç — loglama FPS düşürür */ }
+                        .addOnFailureListener {  }
                         .addOnCompleteListener {
                             processingCount.decrementAndGet()
                             imageProxy.close()
