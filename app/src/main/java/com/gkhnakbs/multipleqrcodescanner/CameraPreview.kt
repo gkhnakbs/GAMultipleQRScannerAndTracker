@@ -2,8 +2,12 @@ package com.gkhnakbs.multipleqrcodescanner
 
 import android.annotation.SuppressLint
 import android.graphics.PointF
+import android.hardware.camera2.CaptureRequest
+import android.util.Range
 import android.util.Size
 import androidx.annotation.OptIn
+import androidx.camera.camera2.interop.Camera2Interop
+import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ExperimentalGetImage
 import androidx.camera.core.ImageAnalysis
@@ -27,129 +31,177 @@ import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Created by Gökhan Akbaş on 10/10/2025.
  */
 
 @SuppressLint("RestrictedApi")
-@OptIn(ExperimentalGetImage::class)
+@OptIn(ExperimentalCamera2Interop::class, ExperimentalGetImage::class)
 @Composable
 fun CameraPreview(
-    onQRCodesDetected: (Sequence<QRCodeResult>) -> Unit,
+    onQRCodesDetected: (List<QRCodeResult>) -> Unit,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val cameraProviderFuture = remember { ProcessCameraProvider.getInstance(context) }
 
-    // Arka plan işlemleri için tek bir thread yeterli ve verimli
-    val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
+    val cameraExecutor = remember { Executors.newFixedThreadPool(2) }
     val mainExecutor = remember { ContextCompat.getMainExecutor(context) }
 
-    val scanner = remember {
+    val scanners = remember {
         val options = BarcodeScannerOptions.Builder()
-            .setBarcodeFormats(
-                Barcode.FORMAT_DATA_MATRIX
-            )
+            .setBarcodeFormats(Barcode.FORMAT_DATA_MATRIX)
             .build()
-        BarcodeScanning.getClient(options)
+        Array(2) { BarcodeScanning.getClient(options) }
     }
+
+    val scannerIndex = remember { AtomicInteger(0) }
+    val processingCount = remember { AtomicInteger(0) }
 
     DisposableEffect(Unit) {
         onDispose {
             cameraExecutor.shutdown()
-            scanner.close()
+            scanners.forEach { it.close() }
         }
     }
 
     AndroidView(
         factory = { ctx ->
             val previewView = PreviewView(ctx).apply {
-                this.scaleType = PreviewView.ScaleType.FILL_CENTER
-                this.implementationMode = PreviewView.ImplementationMode.PERFORMANCE
+                scaleType = PreviewView.ScaleType.FILL_CENTER
+                implementationMode = PreviewView.ImplementationMode.PERFORMANCE
             }
+
+            var scaleFactor = 0f
+            var offsetX = 0f
+            var offsetY = 0f
+            var lastViewWidth = 0
+            var lastViewHeight = 0
+
             cameraProviderFuture.addListener({
                 val cameraProvider = cameraProviderFuture.get()
 
-                val preview = Preview.Builder().build().also {
-                    it.surfaceProvider = previewView.surfaceProvider
-                }
+                val preview = Preview.Builder()
+                    .build()
+                    .also { it.surfaceProvider = previewView.surfaceProvider }
 
+                // ✅ 640x480 — Data Matrix için yeterli, ML Kit'e en az iş
                 val resolutionSelector = ResolutionSelector.Builder()
                     .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
                     .setResolutionStrategy(
                         ResolutionStrategy(
-                            Size(640, 480),
+                            Size(960, 720),
                             ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER
                         )
                     )
                     .build()
 
-                val imageAnalysis = ImageAnalysis.Builder()
+                val imageAnalysisBuilder = ImageAnalysis.Builder()
                     .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
                     .setResolutionSelector(resolutionSelector)
                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                    .build()
+
+                Camera2Interop.Extender(imageAnalysisBuilder)
+                    .setCaptureRequestOption(
+                        CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,
+                        Range(60, 60)
+                    )
+                    .setCaptureRequestOption(
+                        CaptureRequest.CONTROL_AF_MODE,
+                        CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO
+                    )
+                    .setCaptureRequestOption(
+                        CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE,
+                        CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF
+                    )
+                    .setCaptureRequestOption(
+                        CaptureRequest.NOISE_REDUCTION_MODE,
+                        CaptureRequest.NOISE_REDUCTION_MODE_FAST
+                    )
+                    .setCaptureRequestOption(
+                        CaptureRequest.EDGE_MODE,
+                        CaptureRequest.EDGE_MODE_FAST
+                    )
+
+                val imageAnalysis = imageAnalysisBuilder.build()
 
                 imageAnalysis.setAnalyzer(cameraExecutor) { imageProxy ->
+                    if (processingCount.get() >= 2) {
+                        imageProxy.close()
+                        return@setAnalyzer
+                    }
+                    processingCount.incrementAndGet()
 
-                    val mediaImage = imageProxy.image ?: run {
+                    val mediaImage = imageProxy.image
+                    if (mediaImage == null) {
+                        processingCount.decrementAndGet()
                         imageProxy.close()
                         return@setAnalyzer
                     }
 
-                    val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
+                    val rotationDegrees = imageProxy.imageInfo.rotationDegrees
+
+                    // ✅ Scale cache'i sadece view boyutu değişince güncelle
+                    val vw = previewView.width
+                    val vh = previewView.height
+                    if (vw != lastViewWidth || vh != lastViewHeight) {
+                        lastViewWidth = vw
+                        lastViewHeight = vh
+
+                        val isRotated = rotationDegrees == 90 || rotationDegrees == 270
+                        val sw = (if (isRotated) imageProxy.height else imageProxy.width).toFloat()
+                        val sh = (if (isRotated) imageProxy.width else imageProxy.height).toFloat()
+                        val tw = vw.toFloat()
+                        val th = vh.toFloat()
+
+                        val sf = maxOf(tw / sw, th / sh)
+                        scaleFactor = sf
+                        offsetX = (tw - sw * sf) * 0.5f
+                        offsetY = (th - sh * sf) * 0.5f
+                    }
+
+                    val sf = scaleFactor
+                    val ox = offsetX
+                    val oy = offsetY
+
+                    val image = InputImage.fromMediaImage(mediaImage, rotationDegrees)
+                    val scanner =
+                        scanners[scannerIndex.getAndIncrement() and 1]
 
                     scanner.process(image)
                         .addOnSuccessListener { barcodes ->
-                            if (barcodes.isNotEmpty()) {
-                                val targetWidth = previewView.width.toFloat()
-                                val targetHeight = previewView.height.toFloat()
+                            if (barcodes.isEmpty()) {
+                                mainExecutor.execute { onQRCodesDetected(emptyList()) }
+                                return@addOnSuccessListener
+                            }
 
-                                val rotationDegrees = imageProxy.imageInfo.rotationDegrees
-                                val isImageRotated = rotationDegrees == 90 || rotationDegrees == 270
-                                val sourceWidth = if (isImageRotated) imageProxy.height.toFloat() else imageProxy.width.toFloat()
-                                val sourceHeight = if (isImageRotated) imageProxy.width.toFloat() else imageProxy.height.toFloat()
 
-                                val scaleFactor = maxOf(targetWidth / sourceWidth, targetHeight / sourceHeight)
-                                val offsetX = (targetWidth - (sourceWidth * scaleFactor)) / 2f
-                                val offsetY = (targetHeight - (sourceHeight * scaleFactor)) / 2f
+                            // ✅ Tam kapasite ile oluştur — resize yok
+                            val results = ArrayList<QRCodeResult>(barcodes.size)
 
-                                val resultList = ArrayList<QRCodeResult>(barcodes.size)
-                                for (barcode in barcodes) {
-                                    val value = barcode.rawValue
-                                    val corners = barcode.cornerPoints
+                            for (i in barcodes.indices) {
+                                val barcode = barcodes[i]
+                                val value = barcode.rawValue ?: continue
+                                val corners = barcode.cornerPoints ?: continue
 
-                                    if (value != null && corners != null) {
-                                        // Köşe listesi için de bellek tahsisini optimize et.
-                                        val transformedCorners = ArrayList<PointF>(4)
-                                        for (point in corners) {
-                                            transformedCorners.add(
-                                                PointF(
-                                                    (point.x * scaleFactor) + offsetX,
-                                                    (point.y * scaleFactor) + offsetY
-                                                )
-                                            )
-                                        }
-                                        resultList.add(QRCodeResult(value, barcode.format, transformedCorners))
-                                    }
+                                // ✅ Fixed size 4 — Data Matrix her zaman 4 köşe
+                                val transformed = ArrayList<PointF>(4)
+                                for (j in corners.indices) {
+                                    val p = corners[j]
+                                    transformed.add(PointF(p.x * sf + ox, p.y * sf + oy))
                                 }
+                                results.add(QRCodeResult(value, barcode.format, transformed))
+                            }
 
-                                if (resultList.isNotEmpty()) {
-                                    mainExecutor.execute { onQRCodesDetected(resultList.asSequence()) }
-                                }
-                            } else {
-                                // Boş liste durumunu da ana thread'e gönder.
-                                mainExecutor.execute { onQRCodesDetected(emptySequence()) }
+                            if (results.isNotEmpty()) {
+                                mainExecutor.execute { onQRCodesDetected(results) }
                             }
                         }
-                        .addOnFailureListener { e ->
-                            e.printStackTrace()
-                            imageProxy.close()
-                            imageProxy.image?.close()
-                        }
+                        .addOnFailureListener { /* sessizce geç — loglama FPS düşürür */ }
                         .addOnCompleteListener {
-                            imageProxy.image?.close()
+                            processingCount.decrementAndGet()
                             imageProxy.close()
                         }
                 }
@@ -157,10 +209,12 @@ fun CameraPreview(
                 try {
                     cameraProvider.unbindAll()
                     cameraProvider.bindToLifecycle(
-                        lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, imageAnalysis
+                        lifecycleOwner,
+                        CameraSelector.DEFAULT_BACK_CAMERA,
+                        preview,
+                        imageAnalysis
                     )
-                } catch (e: Exception) {
-                    e.printStackTrace()
+                } catch (_: Exception) {
                 }
 
             }, mainExecutor)
