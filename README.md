@@ -76,8 +76,8 @@ Bu proje çoklu kod okumasına yönelik olarak aşağıdaki stratejilerle optimi
 
 | Metrik | Değer |
 |--------|-------|
-| **Hedef FPS** | 25-30 FPS |
-| **Çözünürlük** | 1920×1080 |
+| **Hedef FPS** | 55-60 FPS |
+| **Çözünürlük** | 960x720 |
 | **Eş Zamanlı QR** | 10+ kod desteklenir |
 | **Gecikme** | < 100ms (tipik) |
 | **Bellek Yönetimi** | Minimum GC |
@@ -201,7 +201,7 @@ private fun isPointInPolygon(point: Offset, polygon: List<Offset>): Boolean {
 | Alan | Öneri |
 |------|-------|
 | **Format Ekleme** | `BarcodeScannerOptions`'a `FORMAT_AZTEC`, `FORMAT_PDF417` vb. ekleyin |
-| **Çözünürlük** | Düşük güçlü cihazlarda 1280×720'ye düşürün; güçlü cihazlarda 2560×1440 deneyin |
+| **Çözünürlük** | Düşük güçlü cihazlarda 640×480'ye düşürün; güçlü cihazlarda 2560×1440 deneyin |
 | **Stroke Kalınlığı** | Çok sayıda poligon varsa `Stroke(width = 8f)` ile daha ince çizgiler |
 | **Animasyon** | `Spring.StiffnessHigh` ile daha hızlı animasyonlar |
 
