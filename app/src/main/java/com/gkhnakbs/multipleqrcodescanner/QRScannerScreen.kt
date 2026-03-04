@@ -1,11 +1,7 @@
 package com.gkhnakbs.multipleqrcodescanner
 
+import android.view.Choreographer
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.AnimationVector2D
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.VectorConverter
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Canvas
@@ -27,12 +23,11 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -43,10 +38,8 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.imageResource
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.launch
 
 /**
  * Created by Gökhan Akbaş on 10/10/2025.
@@ -54,43 +47,41 @@ import kotlinx.coroutines.launch
 
 @Composable
 fun QRScannerScreen() {
-    var detectedQRCodes by remember { mutableStateOf<List<QRCodeResult>>(emptyList()) }
+    val currentCorners = remember { mutableMapOf<String, List<Offset>>() }
+
+    // ✅ Her barkodun son görüldüğü zaman (nanos)
+    val lastSeenTime = remember { mutableMapOf<String, Long>() }
+
+    // ✅ Kaç nanosaniye görülmezse silinsin (500ms)
+    val retentionNanos = 500_000_000L
 
     val uniqueQRCodes = remember { mutableStateOf(emptySet<String>()) }
     val verifiedQRCodes = remember { mutableStateOf(emptySet<String>()) }
+
     val path = remember { Path() }
-    val strokeStyle = remember { Stroke(width = 15f) } // Stroke nesnesini cache'le
+    val strokeStyle = remember { Stroke(width = 15f) }
     val verifiedColor = remember { Color(0xFF4CAF50) }
     val unverifiedColor = remember { Color(0xFFFF0000) }
-    val animatedCorners =
-        remember { mutableStateMapOf<String, List<Animatable<Offset, AnimationVector2D>>>() }
     val listState = rememberLazyListState()
     val checkImage = ImageBitmap.imageResource(id = R.drawable.check_sign_icon)
 
+    val checkHalfW = remember(checkImage) { checkImage.width * 0.5f }
+    val checkHalfH = remember(checkImage) { checkImage.height * 0.5f }
 
-    LaunchedEffect(detectedQRCodes) {
-        val detectedValues = detectedQRCodes.map { it.value }
-
-        animatedCorners.keys.removeAll { it !in detectedValues }
-
-        detectedQRCodes.forEach { qr ->
-            val targetCorners = qr.corners.map { Offset(it.x, it.y) }
-            if (!animatedCorners.containsKey(qr.value)) {
-                animatedCorners[qr.value] =
-                    targetCorners.map { Animatable(it, Offset.VectorConverter) }
-            } else {
-                animatedCorners[qr.value]?.forEachIndexed { index, cornerAnimatable ->
-                    launch {
-                        cornerAnimatable.animateTo(
-                            targetValue = targetCorners[index],
-                            animationSpec = spring(
-                                dampingRatio = Spring.DampingRatioLowBouncy,
-                                stiffness = Spring.StiffnessMedium
-                            )
-                        )
-                    }
-                }
+    val frameTick = remember { mutableLongStateOf(0L) }
+    val choreographerCallback = remember {
+        object : Choreographer.FrameCallback {
+            override fun doFrame(frameTimeNanos: Long) {
+                frameTick.longValue = frameTimeNanos
+                Choreographer.getInstance().postFrameCallback(this)
             }
+        }
+    }
+
+    DisposableEffect(Unit) {
+        Choreographer.getInstance().postFrameCallback(choreographerCallback)
+        onDispose {
+            Choreographer.getInstance().removeFrameCallback(choreographerCallback)
         }
     }
 
@@ -98,14 +89,17 @@ fun QRScannerScreen() {
         listState.scrollToItem(0)
     }
 
+    val reversedUniqueList = remember(uniqueQRCodes.value) {
+        uniqueQRCodes.value.toList().asReversed()
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .pointerInput(animatedCorners) {
+            .pointerInput(Unit) {
                 detectTapGestures { tapOffset ->
-                    for ((value, cornersAnimatable) in animatedCorners.entries.reversed()) {
-                        val currentCorners = cornersAnimatable.map { it.value }
-                        if (isPointInPolygon(tapOffset, currentCorners)) {
+                    for ((value, offsets) in currentCorners.entries.reversed()) {
+                        if (isPointInPolygon(tapOffset, offsets)) {
                             verifiedQRCodes.value += value
                             break
                         }
@@ -114,19 +108,46 @@ fun QRScannerScreen() {
             }
     ) {
         CameraPreview(
-            onQRCodesDetected = { codesSequence ->
-                val codes = codesSequence.toList()
-                detectedQRCodes = codes
-                var newCodesFound: MutableList<String>? = null
-                for (qr in codes) {
-                    if (qr.value.isNotBlank() && qr.value !in uniqueQRCodes.value) {
-                        if (newCodesFound == null) newCodesFound = mutableListOf()
-                        newCodesFound.add(qr.value)
+            onQRCodesDetected = { codes ->
+                val now = System.nanoTime()
+
+                for (i in codes.indices) {
+                    val qr = codes[i]
+                    val offsets = ArrayList<Offset>(qr.corners.size)
+                    for (j in qr.corners.indices) {
+                        val c = qr.corners[j]
+                        offsets.add(Offset(c.x, c.y))
+                    }
+                    currentCorners[qr.value] = offsets
+                    lastSeenTime[qr.value] = now
+                }
+
+                val iterator = lastSeenTime.entries.iterator()
+                while (iterator.hasNext()) {
+                    val entry = iterator.next()
+                    if (now - entry.value > retentionNanos) {
+                        currentCorners.remove(entry.key)
+                        iterator.remove()
                     }
                 }
 
-                if (newCodesFound != null) {
-                    uniqueQRCodes.value += newCodesFound
+                var hasNew = false
+                val currentUnique = uniqueQRCodes.value
+                for (i in codes.indices) {
+                    if (codes[i].value.isNotBlank() && codes[i].value !in currentUnique) {
+                        hasNew = true
+                        break
+                    }
+                }
+
+                if (hasNew) {
+                    val newSet = LinkedHashSet<String>(currentUnique.size + codes.size)
+                    newSet.addAll(currentUnique)
+                    for (i in codes.indices) {
+                        val v = codes[i].value
+                        if (v.isNotBlank()) newSet.add(v)
+                    }
+                    uniqueQRCodes.value = newSet
                 }
             }
         )
@@ -135,52 +156,44 @@ fun QRScannerScreen() {
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer(
-                    alpha = 0.99f, // Donanım hızlandırmayı tetikler.
-                    compositingStrategy = CompositingStrategy.Offscreen // Daha verimli compositing
+                    alpha = 0.99f,
+                    compositingStrategy = CompositingStrategy.Offscreen
                 )
         ) {
-            animatedCorners.forEach { (value, animatables) ->
-                if (animatables.size != 4) return@forEach
-                // Sıfır bellek tahsisi ile Path oluşturma:
-                path.apply {
-                    rewind()
-                    moveTo(animatables[0].value.x, animatables[0].value.y)
-                    lineTo(animatables[1].value.x, animatables[1].value.y)
-                    lineTo(animatables[2].value.x, animatables[2].value.y)
-                    lineTo(animatables[3].value.x, animatables[3].value.y)
-                    close()
-                }
+            frameTick.longValue
+
+            val verified = verifiedQRCodes.value
+
+            currentCorners.forEach { (value, offsets) ->
+                if (offsets.size != 4) return@forEach
+
+                path.rewind()
+                path.moveTo(offsets[0].x, offsets[0].y)
+                path.lineTo(offsets[1].x, offsets[1].y)
+                path.lineTo(offsets[2].x, offsets[2].y)
+                path.lineTo(offsets[3].x, offsets[3].y)
+                path.close()
+
+                val isVerified = verified.contains(value)
 
                 drawPath(
                     path = path,
-                    color = if (verifiedQRCodes.value.contains(value)) verifiedColor else unverifiedColor,
+                    color = if (isVerified) verifiedColor else unverifiedColor,
                     style = strokeStyle
                 )
 
-                if (verifiedQRCodes.value.contains(value)) {
-                    // Sıfır bellek tahsisi ile merkez noktası hesaplama:
-                    var sumX = 0f
-                    var sumY = 0f
-                    for (animatable in animatables) {
-                        sumX += animatable.value.x
-                        sumY += animatable.value.y
-                    }
-
-                    val centerX = sumX / 4
-                    val centerY = sumY / 4
-
+                if (isVerified) {
                     drawImage(
                         image = checkImage,
                         topLeft = Offset(
-                            centerX - (checkImage.width / 2),
-                            centerY - (checkImage.height / 2)
+                            (offsets[0].x + offsets[1].x + offsets[2].x + offsets[3].x) * 0.25f - checkHalfW,
+                            (offsets[0].y + offsets[1].y + offsets[2].y + offsets[3].y) * 0.25f - checkHalfH
                         )
                     )
                 }
             }
         }
 
-        // Tespit edilen QR kodlar listesi - Optimize edilmiş
         AnimatedVisibility(
             visible = uniqueQRCodes.value.isNotEmpty(),
             modifier = Modifier.align(Alignment.BottomCenter),
@@ -201,7 +214,8 @@ fun QRScannerScreen() {
 
                 Button(
                     onClick = {
-                        detectedQRCodes = emptyList()
+                        currentCorners.clear()
+                        lastSeenTime.clear()
                         uniqueQRCodes.value = emptySet()
                         verifiedQRCodes.value = emptySet()
                     },
@@ -216,14 +230,10 @@ fun QRScannerScreen() {
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(
-                        items = uniqueQRCodes.value.toList().asReversed(),
+                        items = reversedUniqueList,
                         key = { it }
                     ) { qr ->
-                        val text = if (verifiedQRCodes.value.contains(qr)) {
-                            "Doğrulandı"
-                        } else {
-                            "Doğrulanmadı"
-                        }
+                        val isVerified = verifiedQRCodes.value.contains(qr)
 
                         Card(
                             modifier = Modifier
@@ -232,9 +242,7 @@ fun QRScannerScreen() {
                             colors = CardDefaults.cardColors(
                                 containerColor = Color.White.copy(alpha = 0.9f)
                             ),
-                            onClick = {
-                                verifiedQRCodes.value += qr
-                            }
+                            onClick = { verifiedQRCodes.value += qr }
                         ) {
                             Column(
                                 modifier = Modifier
@@ -248,9 +256,8 @@ fun QRScannerScreen() {
                                     modifier = Modifier.fillMaxWidth(),
                                     style = MaterialTheme.typography.bodyMedium
                                 )
-
                                 Text(
-                                    text = text,
+                                    text = if (isVerified) "Doğrulandı" else "Doğrulanmadı",
                                     modifier = Modifier.fillMaxWidth(),
                                     style = MaterialTheme.typography.bodyMedium
                                 )
